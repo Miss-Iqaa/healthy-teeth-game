@@ -1,0 +1,280 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Healthy Teeth Game</title>
+    
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+
+    <style>
+        body {
+            font-family: 'Comic Sans MS', 'Verdana', sans-serif;
+            background-color: #E0F7FA;
+            margin: 0;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+
+        h1 { color: #006064; margin: 15px 0; }
+        
+        #game-container {
+            position: relative;
+            width: 640px;
+            max-width: 95%;
+            border: 8px solid #0097A7;
+            border-radius: 20px;
+            background: #fff;
+            overflow: hidden;
+            box-shadow: 0 10px 20px rgba(0,0,0,0.2);
+        }
+
+        /* Video Setup */
+        #video-output {
+            width: 100%;
+            height: auto;
+            transform: scaleX(-1); /* Mirrors camera for the player */
+            display: block;
+        }
+
+        /* UI Elements */
+        #ui-layer {
+            position: absolute;
+            top: 0; left: 0; width: 100%; height: 100%;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+            pointer-events: none;
+        }
+
+        .question-box {
+            background: rgba(255, 255, 255, 0.9);
+            padding: 10px;
+            font-size: 1.4rem;
+            text-align: center;
+            border-bottom: 4px solid #0097A7;
+        }
+
+        .food-display { font-size: 3.5rem; display: block; margin: 5px 0; }
+
+        .guides {
+            display: flex;
+            justify-content: space-between;
+            padding: 15px;
+            font-weight: bold;
+            font-size: 1.2rem;
+        }
+        .left-guide { color: #2E7D32; background: rgba(255,255,255,0.7); padding: 5px 10px; border-radius: 10px; }
+        .right-guide { color: #C62828; background: rgba(255,255,255,0.7); padding: 5px 10px; border-radius: 10px; }
+
+        /* Feedback Popups */
+        #feedback-overlay {
+            position: absolute;
+            top: 50%; left: 50%;
+            transform: translate(-50%, -50%);
+            font-size: 3rem;
+            font-weight: bold;
+            text-align: center;
+            width: 80%;
+            opacity: 0;
+            transition: opacity 0.3s;
+            z-index: 10;
+            text-shadow: 2px 2px 5px #fff;
+        }
+
+        /* Screens */
+        #start-screen, #end-screen {
+            position: absolute;
+            top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0, 151, 167, 0.98);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            z-index: 20;
+            text-align: center;
+            padding: 20px;
+            box-sizing: border-box;
+        }
+
+        #end-screen { display: none; }
+
+        button {
+            padding: 15px 40px;
+            font-size: 1.5rem;
+            background: #FFCA28;
+            border: none;
+            border-radius: 50px;
+            cursor: pointer;
+            box-shadow: 0 5px 0 #F57F17;
+            font-family: inherit;
+        }
+
+        #progress-bar {
+            width: 100%;
+            height: 10px;
+            background: #eee;
+            position: absolute;
+            bottom: 0;
+        }
+        #progress-fill {
+            width: 0%;
+            height: 100%;
+            background: #4CAF50;
+            transition: width 0.3s;
+        }
+    </style>
+</head>
+<body>
+
+    <h1>🦷 Healthy Teeth? 🦷</h1>
+
+    <div id="game-container">
+        <video id="video-output" playsinline></video>
+        
+        <div id="ui-layer">
+            <div class="question-box">
+                <span id="instruction">Is this good for teeth?</span>
+                <span class="food-display" id="food-emoji">🍎</span>
+                <b id="food-name">Apple</b>
+            </div>
+
+            <div id="feedback-overlay"></div>
+
+            <div class="guides">
+                <div class="left-guide">⬅️ YES (Tilt Left)</div>
+                <div class="right-guide">(Tilt Right) NO ➡️</div>
+            </div>
+            
+            <div id="progress-bar"><div id="progress-fill"></div></div>
+        </div>
+
+        <div id="start-screen">
+            <h2>How to Play:</h2>
+            <p>Tilt your head <b>LEFT</b> for Healthy Foods.<br>
+               Tilt your head <b>RIGHT</b> for Sugary Foods.</p>
+            <button onclick="startGame()">START GAME</button>
+        </div>
+
+        <div id="end-screen">
+            <h2>Great Job!</h2>
+            <p id="final-score"></p>
+            <button onclick="location.reload()">Play Again</button>
+        </div>
+    </div>
+
+    <script>
+        // --- 1. FOOD LIST (26 ITEMS) ---
+        const foods = [
+            { name: "Apple", emoji: "🍎", isGood: true, text: "Apples help clean your teeth!" },
+            { name: "Soda", emoji: "🥤", isGood: false, text: "Soda has too much sugar and acid." },
+            { name: "Milk", emoji: "🥛", isGood: true, text: "Milk has calcium for strong teeth." },
+            { name: "Candy", emoji: "🍬", isGood: false, text: "Sticky candy causes cavities." },
+            { name: "Carrot", emoji: "🥕", isGood: true, text: "Crunchy carrots are like nature's toothbrush!" },
+            { name: "Donut", emoji: "🍩", isGood: false, text: "Donuts are full of sugar." },
+            { name: "Water", emoji: "💧", isGood: true, text: "Water washes away food and sugar." },
+            { name: "Chocolate", emoji: "🍫", isGood: false, text: "Chocolate is a 'sometimes' treat." },
+            { name: "Cheese", emoji: "🧀", isGood: true, text: "Cheese protects your tooth enamel." },
+            { name: "Lollipop", emoji: "🍭", isGood: false, text: "Lollipops stay in your mouth too long." },
+            { name: "Broccoli", emoji: "🥦", isGood: true, text: "Vegetables keep your mouth healthy." },
+            { name: "Ice Cream", emoji: "🍦", isGood: false, text: "Ice cream is very cold and sugary." },
+            { name: "Egg", emoji: "🥚", isGood: true, text: "Eggs have vitamins for your gums." },
+            { name: "Honey", emoji: "🍯", isGood: false, text: "Honey is very sweet and sticky." },
+            { name: "Strawberry", emoji: "🍓", isGood: true, text: "Berries are a healthy snack." },
+            { name: "Potato Chips", emoji: "🍟", isGood: false, text: "Starchy chips can get stuck in teeth." },
+            { name: "Yogurt", emoji: "🍦", isGood: true, text: "Plain yogurt is good for your mouth." },
+            { name: "Cookies", emoji: "🍪", isGood: false, text: "Cookies are sugary treats." },
+            { name: "Almonds", emoji: "🥜", isGood: true, text: "Nuts are low in sugar and high in protein." },
+            { name: "Gummy Bears", emoji: "🧸", isGood: false, text: "Gummies stick to your teeth for a long time." },
+            { name: "Cucumber", emoji: "🥒", isGood: true, text: "Cucumbers are full of water and healthy." },
+            { name: "Cake", emoji: "🍰", isGood: false, text: "Cake has lots of sugar and frosting." },
+            { name: "Fish", emoji: "🐟", isGood: true, text: "Fish is great for your body and teeth." },
+            { name: "Syrup", emoji: "🥞", isGood: false, text: "Syrup is pure sugar." },
+            { name: "Pear", emoji: "🍐", isGood: true, text: "Pears help neutralize acids." },
+            { name: "Juice Box", emoji: "🧃", isGood: false, text: "Fruit juice often has hidden sugar." }
+        ];
+
+        let currentIndex = 0;
+        let score = 0;
+        let isWaiting = false;
+
+        const videoElement = document.getElementById('video-output');
+        const feedback = document.getElementById('feedback-overlay');
+
+        // --- 2. SETUP AI ---
+        const faceMesh = new FaceMesh({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}`});
+        faceMesh.setOptions({ maxNumFaces: 1, refineLandmarks: true, minDetectionConfidence: 0.5 });
+        faceMesh.onResults(onResults);
+
+        async function startGame() {
+            document.getElementById('start-screen').style.display = 'none';
+            const camera = new Camera(videoElement, {
+                onFrame: async () => { await faceMesh.send({image: videoElement}); },
+                width: 640, height: 480
+            });
+            camera.start();
+            updateUI();
+        }
+
+        // --- 3. DETECT TILT ---
+        function onResults(results) {
+            if (isWaiting || !results.multiFaceLandmarks) return;
+            
+            const landmarks = results.multiFaceLandmarks[0];
+            const leftEye = landmarks[33]; 
+            const rightEye = landmarks[263];
+
+            // Calculate tilt angle
+            const angle = Math.atan2(rightEye.y - leftEye.y, rightEye.x - leftEye.x) * (180 / Math.PI);
+
+            if (angle > 18) checkAnswer("LEFT");  // Player tilted left
+            if (angle < -18) checkAnswer("RIGHT"); // Player tilted right
+        }
+
+        // --- 4. GAME LOGIC ---
+        function checkAnswer(choice) {
+            isWaiting = true;
+            const food = foods[currentIndex];
+            const correct = (choice === "LEFT" && food.isGood) || (choice === "RIGHT" && !food.isGood);
+
+            if (correct) {
+                score++;
+                showFeedback("✅ Correct!", "#2E7D32", food.text);
+            } else {
+                showFeedback("❌ Oops!", "#C62828", food.text);
+            }
+        }
+
+        function showFeedback(title, color, explanation) {
+            feedback.innerHTML = `<div style="color:${color}">${title}</div><div style="font-size:1.5rem; color:#333">${explanation}</div>`;
+            feedback.style.opacity = "1";
+
+            setTimeout(() => {
+                feedback.style.opacity = "0";
+                currentIndex++;
+                if (currentIndex < foods.length) {
+                    updateUI();
+                    isWaiting = false;
+                } else {
+                    endGame();
+                }
+            }, 3000); // 3 seconds to read the explanation
+        }
+
+        function updateUI() {
+            const food = foods[currentIndex];
+            document.getElementById('food-emoji').innerText = food.emoji;
+            document.getElementById('food-name').innerText = food.name;
+            document.getElementById('progress-fill').style.width = `${(currentIndex / foods.length) * 100}%`;
+        }
+
+        function endGame() {
+            document.getElementById('end-screen').style.display = 'flex';
+            document.getElementById('final-score').innerText = `You got ${score} out of ${foods.length} right!`;
+        }
+    </script>
+</body>
+</html>
